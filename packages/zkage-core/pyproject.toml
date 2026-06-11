@@ -1,0 +1,10 @@
+[project]
+name = "zkage-core"
+version = "0.1.0"
+description = "Core cryptography for zk-age-attest: RFC 9474 blind signatures, token codec, device keys, key transparency log"
+requires-python = ">=3.12"
+dependencies = ["cryptography>=44"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

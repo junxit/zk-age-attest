@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# uv / venv
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Demo runtime state (keys, accounts, logs) — never commit key material
+demo-state/
+ua-state*.json
+.zkage-ua/
+*.sqlite
+*.sqlite3
+
+# Reports
+linkability-report.txt
+
+# Environment
+.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

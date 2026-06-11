@@ -1,0 +1,17 @@
+[project]
+name = "zkage-issuer"
+version = "0.1.0"
+description = "zk-age-attest issuer service: enrollment, blind issuance, key and transparency-log endpoints"
+requires-python = ">=3.12"
+dependencies = [
+    "zkage-core",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+
+[tool.uv.sources]
+zkage-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages
+      - run: uv run mypy
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-packages
+      - run: uv run pytest
+
+  quickstart:
+    # Executes the README quickstart verbatim — docs that don't run fail the build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages
+      - run: uv run python scripts/init_federation.py --state demo-state
+      - name: Start issuer and RP
+        run: |
+          uv run uvicorn zkage_issuer.app:create_demo_app --factory --port 8001 &
+          uv run uvicorn zkage_rp.app:create_demo_app --factory --port 8002 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8001/log/head > /dev/null 2>&1 &&
+            curl -fsS http://127.0.0.1:8002/challenge?scope=18 > /dev/null 2>&1 && break
+            sleep 1
+          done
+      - run: uv run zkage-ua enroll --issuer http://127.0.0.1:8001 --claim-age 21 --state ./ua-state.json
+      - run: uv run zkage-ua verify --rp http://127.0.0.1:8002 --scope 18 --state ./ua-state.json | grep "verified: over-18"

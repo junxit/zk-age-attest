@@ -1,0 +1,13 @@
+[project]
+name = "zkage-verifier"
+version = "0.1.0"
+description = "Pure offline verifier SDK for zk-age-attest tokens (no I/O by construction)"
+requires-python = ">=3.12"
+dependencies = ["zkage-core"]
+
+[tool.uv.sources]
+zkage-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

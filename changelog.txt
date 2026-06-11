@@ -1,0 +1,10 @@
+zk-age-attest changelog
+=======================
+
+2026-06-10  init: scaffold uv workspace (zkage-core, zkage-verifier, zkage-issuer, zkage-rp, zkage-ua), CI, project docs, proprietary license (all rights reserved)
+2026-06-10  feat: RFC 9474 RSABSSA blind signatures validated against Appendix A test vectors
+2026-06-10  feat: v1 token codec, device-key issuance binding, hash-chained key transparency log
+2026-06-10  feat: pure offline verifier SDK with decision-table API
+2026-06-10  feat: issuer service (enroll/issue/keys/log), RP demo with pop-before-verify redemption, UA CLI
+2026-06-10  feat: adversarial test battery and issuer+RP linkability simulation with timing report
+2026-06-10  docs: DESIGN.md normative spec and THREAT-MODEL.md risk register

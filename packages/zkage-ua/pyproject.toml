@@ -1,0 +1,19 @@
+[project]
+name = "zkage-ua"
+version = "0.1.0"
+description = "zk-age-attest user-agent CLI: enroll, verify, log-status"
+requires-python = ">=3.12"
+dependencies = [
+    "zkage-core",
+    "httpx>=0.28",
+]
+
+[project.scripts]
+zkage-ua = "zkage_ua.cli:main"
+
+[tool.uv.sources]
+zkage-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

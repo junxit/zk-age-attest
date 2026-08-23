@@ -11,6 +11,7 @@ zk-age-attest changelog
 2026-08-23  docs: SECURITY.md disclosure policy, docs/RUNBOOK.md operations runbook, docs/BENCHMARKS.md measured primitive costs
 2026-08-23  fix: CI never ran — astral-sh/setup-uv@v8 is not a published tag (majors stop at v7), so every run failed at workflow startup with zero jobs scheduled; pinned to v7
 2026-08-23  fix: CI workflow was unparseable YAML — the quickstart grep step contained ": " inside a plain scalar (line 71), so GitHub never loaded ci.yml; moved to a block scalar
+2026-08-23  fix: test_ua_aborts_on_key_substitution was flaky (~7% of runs) — the rogue key's modulus could fall below the honest one, so blind_sign rejected m >= n and the UA reported a transport error instead of reaching the key-substitution check; the rogue key is now drawn with n_rogue >= n_honest
 
 2026-06-10  init: scaffold uv workspace (zkage-core, zkage-verifier, zkage-issuer, zkage-rp, zkage-ua), CI, project docs, proprietary license (all rights reserved)
 2026-06-10  feat: RFC 9474 RSABSSA blind signatures validated against Appendix A test vectors

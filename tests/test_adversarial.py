@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
@@ -197,13 +198,31 @@ def _point_ua_at(state_path: Path, issuer_url: str) -> None:
     save_state(state_path, dataclasses.replace(state, issuer_url=issuer_url))
 
 
+def _rogue_key_for(honest_record: keys.ScopeKeyRecord) -> rsa.RSAPrivateKey:
+    """A rogue key whose modulus is at least as large as the honest one's.
+
+    The UA blinds against the honest (transparency-logged) modulus, so the
+    blinded message is uniform in ``[0, n_honest)``. ``rsabssa.blind_sign``
+    rejects ``m >= n``, so a rogue key with a smaller modulus makes the evil
+    issuer raise -- and the UA then reports a transport error instead of
+    reaching the key-substitution check this test exists to exercise. Measured
+    over 1560 key pairs that misfires on ~7% of runs. Requiring
+    ``n_rogue >= n_honest`` keeps the substitution itself the only variable.
+    """
+    honest_n = honest_record.public_key().public_numbers().n
+    while True:
+        rogue = keys.generate_scope_key(2048)
+        if rogue.private_numbers().public_numbers.n >= honest_n:
+            return rogue
+
+
 def test_ua_aborts_on_key_substitution(world: SimpleNamespace, tmp_path: Path) -> None:
     """Issuer signs with a rogue key while claiming the logged key id: the UA's
     Finalize check against the transparency-logged key fails closed, and no
     token ever reaches the RP."""
-    rogue = keys.generate_scope_key(2048)
     evil = _evil_issuer_base(world)
     honest_record = next(r for r in world.keyset if r.scope == 18)
+    rogue = _rogue_key_for(honest_record)
 
     @evil.post("/issue")
     async def issue(request: Request) -> object:

@@ -49,7 +49,7 @@ def federation_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return state_dir
 
 
-def build_world(federation_dir: Path, tmp_path: Path, rp_id: str = "demo-rp.example"):
+def build_world(federation_dir: Path, tmp_path: Path, rp_id: str = "rp.test"):
     """Fresh issuer + RP apps over the shared federation keys, isolated stores."""
     from zkage_rp.app import create_app as create_rp_app
 

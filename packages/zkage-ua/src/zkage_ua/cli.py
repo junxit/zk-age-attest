@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -32,6 +33,17 @@ def _parser() -> argparse.ArgumentParser:
     enroll.add_argument(
         "--claim-age", type=int, required=True, help="claimed age (stub attester, demo only)"
     )
+    enroll.add_argument(
+        "--attester",
+        default="stub",
+        choices=("stub", "signed"),
+        help="attestation method: 'signed' needs --claim-file from the authority",
+    )
+    enroll.add_argument(
+        "--claim-file",
+        type=Path,
+        help="JSON claim envelope for the signed attester (scripts/sign_claim.py)",
+    )
 
     verify = sub.add_parser(
         "verify", parents=[common], help="prove an age scope to a relying party"
@@ -51,7 +63,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with httpx.Client(timeout=10.0) as http:
             if args.command == "enroll":
-                state = client.enroll(http, args.issuer, args.claim_age, args.state)
+                claim = None
+                if args.attester == "signed":
+                    if not args.claim_file:
+                        raise StateError("--attester signed requires --claim-file")
+                    claim = dict(json.loads(args.claim_file.read_text()))
+                state = client.enroll(
+                    http,
+                    args.issuer,
+                    args.claim_age,
+                    args.state,
+                    attester=args.attester,
+                    claim=claim,
+                )
                 print(f"enrolled: account active, max scope over-{state.max_scope}")
                 print(f"log pinned: {state.pinned_size} records")
                 return 0
@@ -64,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             if args.command == "log-status":
                 status = client.log_status(http, args.state)
-                print(f"log ok: {status['size']} records, head {status['head'][:16]}…")
+                head = str(status["head"])
+                print(f"log ok: {status['size']} records, head {head[:16]}…")
                 print(f"active scopes: {status['active_scopes']}")
                 return 0
     except (client.UAError, StateError) as exc:

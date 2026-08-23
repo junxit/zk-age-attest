@@ -39,7 +39,14 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python }}
       - run: uv sync --all-packages
-      - run: uv run pytest
+      - run: uv run pytest --cov --cov-report=term-missing
+      - name: Upload linkability report (the audit artifact)
+        if: matrix.python == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkability-report
+          path: linkability-report.txt
+          if-no-files-found: error
 
   quickstart:
     # Executes the README quickstart verbatim — docs that don't run fail the build.

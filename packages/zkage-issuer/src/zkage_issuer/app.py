@@ -8,6 +8,7 @@ tokens, or relying parties. Everything it can ever store is in
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 import uuid
@@ -22,7 +23,7 @@ from zkage_core import devicekey, rsabssa, translog
 from zkage_core.encoding import b64u, unb64u
 from zkage_core.keys import keyset_to_json_dict
 from zkage_core.token import SCOPES
-from zkage_issuer.attester import AttestationError, Attester, StubAttester
+from zkage_issuer.attester import AttestationError, Attester, SignedClaimAttester, StubAttester
 from zkage_issuer.federation import FederationState, FederationStateError, active_keyset
 from zkage_issuer.ratelimit import RateLimiter
 from zkage_issuer.store import Account, IssuerStore
@@ -66,6 +67,19 @@ def create_app(
             devicekey.load_device_public(device_pub)
         except (ValueError, devicekey.IssuanceBindingError):
             return _err(400, "bad_device_key")
+
+        # One account per device key (Sybil control): a live enrollment is
+        # returned as-is — re-enrolling never mints a fresh per-account rate
+        # budget, and the claim is not re-attested while the account stands.
+        now = clock()
+        existing = store.get_account_by_device(device_pub)
+        if existing is not None and existing.expires_at > now:
+            return {
+                "account_id": b64u(existing.account_id),
+                "max_scope": existing.max_scope,
+                "expires_at": existing.expires_at,
+            }
+
         attester = attesters.get(req.attester)
         if attester is None:
             return _err(400, "unknown_attester")
@@ -73,7 +87,29 @@ def create_app(
             max_scope = attester.attest(req.claim)
         except AttestationError:
             return _err(403, "attestation_failed")
-        now = clock()
+
+        if existing is not None:
+            # Expired: renew in place (the unique index forbids a second row),
+            # applying the fresh attestation result.
+            account = Account(
+                account_id=existing.account_id,
+                device_pub=device_pub,
+                max_scope=max_scope,
+                enrolled_at=now,
+                expires_at=now + DEFAULT_ACCOUNT_VALIDITY,
+            )
+            store.renew_account(
+                existing.account_id,
+                max_scope=max_scope,
+                enrolled_at=now,
+                expires_at=account.expires_at,
+            )
+            return {
+                "account_id": b64u(account.account_id),
+                "max_scope": max_scope,
+                "expires_at": account.expires_at,
+            }
+
         account = Account(
             account_id=uuid.uuid4().bytes,
             device_pub=device_pub,
@@ -81,10 +117,15 @@ def create_app(
             enrolled_at=now,
             expires_at=now + DEFAULT_ACCOUNT_VALIDITY,
         )
-        store.add_account(account)
+        if not store.add_account(account):
+            # A concurrent enrollment for this device won the unique slot.
+            winner = store.get_account_by_device(device_pub)
+            if winner is None:  # pragma: no cover - slot existed a moment ago
+                return _err(500, "enrollment_conflict")
+            account = winner
         return {
             "account_id": b64u(account.account_id),
-            "max_scope": max_scope,
+            "max_scope": account.max_scope,
             "expires_at": account.expires_at,
         }
 
@@ -101,6 +142,7 @@ def create_app(
             return _err(400, "bad_scope")
 
         now = clock()
+        state.maybe_reload(now)  # pick up on-disk rotations/revocations
         account = store.get_account(account_id)
         if account is None or account.expires_at <= now:
             return _err(401, "unknown_or_expired_account")
@@ -144,14 +186,18 @@ def create_app(
 
     @app.get("/keys")
     def keyset() -> object:
-        return keyset_to_json_dict(active_keyset(state.records, clock()))
+        now = clock()
+        state.maybe_reload(now)
+        return keyset_to_json_dict(active_keyset(state.records, now))
 
     @app.get("/log")
     def log() -> PlainTextResponse:
+        state.maybe_reload(clock())
         return PlainTextResponse(translog.to_jsonl(state.records))
 
     @app.get("/log/head")
     def log_head() -> object:
+        state.maybe_reload(clock())
         return {
             "head": state.signed_head.to_json_dict(),
             "log_public_key": b64u(state.log_public_raw),
@@ -166,6 +212,11 @@ def create_demo_app() -> FastAPI:
     now = int(time.time())
     state = FederationState.load(state_dir, now)
     store = IssuerStore(state_dir / "issuer" / "issuer.sqlite")
-    return create_app(
-        state, store, RateLimiter(), {"stub": StubAttester()}, lambda: int(time.time())
-    )
+
+    attesters: dict[str, Attester] = {"stub": StubAttester()}
+    attester_pub_path = state_dir / "public" / "attester_pub.b64"
+    with contextlib.suppress(FileNotFoundError):
+        # A federation predating the signed attester keeps the stub only.
+        attesters["signed"] = SignedClaimAttester(unb64u(attester_pub_path.read_text().strip()))
+
+    return create_app(state, store, RateLimiter(), attesters, lambda: int(time.time()))

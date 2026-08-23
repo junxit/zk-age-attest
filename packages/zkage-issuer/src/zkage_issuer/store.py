@@ -4,6 +4,11 @@ The accounts table is the complete, normative list of what the issuer may
 store about a user: an opaque account id, the device public key, the maximum
 scope, and two timestamps. No date of birth, no attester artifacts, no
 issuance contents (blinded messages are never persisted).
+
+One account per device public key (unique index): re-enrollment returns the
+existing account instead of minting a fresh per-account rate budget —
+otherwise an adult farming tokens for minors would simply enroll unlimited
+accounts and render the rate limits decorative.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     enrolled_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_device_pub ON accounts(device_pub);
 CREATE TABLE IF NOT EXISTS seen_requests (
     request_id BLOB PRIMARY KEY,
     ts INTEGER NOT NULL
@@ -49,20 +55,30 @@ class IssuerStore:
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
 
-    def add_account(self, account: Account) -> None:
-        """Persist a new enrollment."""
+    def add_account(self, account: Account) -> bool:
+        """Persist a new enrollment.
+
+        Returns:
+            True on success; False if a concurrent enrollment for the same
+            device key already claimed the unique slot (caller should refetch).
+        """
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
-                (
-                    account.account_id,
-                    account.device_pub,
-                    account.max_scope,
-                    account.enrolled_at,
-                    account.expires_at,
-                ),
-            )
+            try:
+                self._conn.execute(
+                    "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
+                    (
+                        account.account_id,
+                        account.device_pub,
+                        account.max_scope,
+                        account.enrolled_at,
+                        account.expires_at,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                self._conn.rollback()
+                return False
             self._conn.commit()
+            return True
 
     def get_account(self, account_id: bytes) -> Account | None:
         """Fetch an enrollment by account id."""
@@ -73,6 +89,28 @@ class IssuerStore:
                 (account_id,),
             ).fetchone()
         return Account(*row) if row else None
+
+    def get_account_by_device(self, device_pub: bytes) -> Account | None:
+        """Fetch the one enrollment bound to a device public key, if any."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT account_id, device_pub, max_scope, enrolled_at, expires_at"
+                " FROM accounts WHERE device_pub = ?",
+                (device_pub,),
+            ).fetchone()
+        return Account(*row) if row else None
+
+    def renew_account(
+        self, account_id: bytes, *, max_scope: int, enrolled_at: int, expires_at: int
+    ) -> None:
+        """Refresh an existing enrollment after expiry (same id, new window/scope)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE accounts SET max_scope = ?, enrolled_at = ?, expires_at = ?"
+                " WHERE account_id = ?",
+                (max_scope, enrolled_at, expires_at, account_id),
+            )
+            self._conn.commit()
 
     def mark_request(self, request_id: bytes, now: int, window: int = 600) -> bool:
         """Record a request id; return False if it was already seen in the window.

@@ -27,6 +27,13 @@ from zkage_core.token import SCOPES
 LOG_HEAD_TAG = b"zkage/v1/loghead\x00"
 GENESIS_PREV = bytes(32)
 
+#: How many trailing record hashes a UA accepts as an RP's gossiped ``log_head``.
+#: RPs refresh asynchronously, so their view may legitimately lag several
+#: appends behind (one rotation writes two records); a forked log's hashes
+#: never appear anywhere in the honest chain, so lag tolerance costs none of
+#: the split-view detection.
+GOSSIP_LAG_TOLERANCE = 16
+
 _STATUS_CODE = {name: i + 1 for i, name in enumerate(KEY_STATUSES)}
 
 

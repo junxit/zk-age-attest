@@ -125,7 +125,7 @@ def test_cross_rp_replay_rejected(
     """A token redeemed at rp.test is dead at a second RP: no pending nonce there."""
     from zkage_rp.app import create_app as create_rp_app
 
-    rp2 = create_rp_app(world.keyset, "other-rp.example", lambda: world.clock["now"])
+    rp2 = create_rp_app(world.keyset, "rp2.test", lambda: world.clock["now"])
     world.transport.register("rp2.test", rp2)
 
     state_path = enroll(world, tmp_path)
@@ -224,7 +224,9 @@ def test_ua_aborts_on_key_substitution(world: SimpleNamespace, tmp_path: Path) -
         ua_client.verify_with_rp(
             world.http, state_path, "http://rp.test", 18, now=world.clock["now"]
         )
-    assert world.rp_app.state.decisions == []  # nothing was redeemed
+    assert world.rp_app.state.decisions == [], (
+        f"a token reached the RP despite the fail-closed abort: {world.rp_app.state.decisions}"
+    )
 
 
 def test_ua_aborts_on_log_rollback(world: SimpleNamespace, tmp_path: Path) -> None:
@@ -262,7 +264,7 @@ def test_ua_aborts_on_split_view(world: SimpleNamespace, tmp_path: Path) -> None
 
     forked_rp = create_rp_app(
         world.keyset,
-        "demo-rp.example",
+        "forked-rp.test",
         lambda: world.clock["now"],
         lambda: secrets.token_bytes(32),
     )
@@ -272,4 +274,81 @@ def test_ua_aborts_on_split_view(world: SimpleNamespace, tmp_path: Path) -> None
     with pytest.raises(ua_client.UAError, match="split-view"):
         ua_client.verify_with_rp(
             world.http, state_path, "http://forked-rp.test", 18, now=world.clock["now"]
+        )
+
+
+def _register_mini_rp(
+    world: SimpleNamespace,
+    host: str,
+    *,
+    rp_id: str | None = None,
+    challenge_ttl_pad: int = 0,
+    redeem_response: object | None = None,
+) -> FastAPI:
+    """A minimal stand-in RP: honest-looking challenge, canned redeem reply."""
+    from fastapi.responses import Response
+
+    mini = FastAPI()
+    used_id = rp_id if rp_id is not None else host
+
+    @mini.get("/challenge")
+    def challenge(scope: int = 18) -> object:
+        c = fetch_challenge(world, scope=scope)
+        return dataclasses.replace(
+            c,
+            rp_id=used_id,
+            expires_at=c.expires_at + challenge_ttl_pad,
+            nonce=secrets.token_bytes(32),
+        ).to_json_dict()
+
+    @mini.post("/redeem")
+    def redeem() -> object:
+        if isinstance(redeem_response, Response):
+            return redeem_response
+        return {"verified": True, "scope": 18}
+
+    world.transport.register(host, mini)
+    return mini
+
+
+def test_ua_survives_non_json_redemption_reply(world: SimpleNamespace, tmp_path: Path) -> None:
+    """A gateway error page instead of JSON is a clean UAError, not a crash."""
+    from fastapi.responses import PlainTextResponse
+
+    _register_mini_rp(
+        world,
+        "html-rp.test",
+        rp_id="html-rp.test",
+        redeem_response=PlainTextResponse("<html>502 Bad Gateway</html>", status_code=502),
+    )
+
+    state_path = enroll(world, tmp_path)
+    with pytest.raises(ua_client.UAError, match="malformed response"):
+        ua_client.verify_with_rp(
+            world.http, state_path, "http://html-rp.test", 18, now=world.clock["now"]
+        )
+
+
+def test_ua_aborts_when_challenge_rp_id_mismatches_host(
+    world: SimpleNamespace, tmp_path: Path
+) -> None:
+    """A challenge minted for another rp_id never leaves this UA as a token."""
+    _register_mini_rp(world, "bait.test", rp_id="somewhere-else.example")
+
+    state_path = enroll(world, tmp_path)
+    with pytest.raises(ua_client.UAError, match="rp_id"):
+        ua_client.verify_with_rp(
+            world.http, state_path, "http://bait.test", 18, now=world.clock["now"]
+        )
+    assert world.rp_app.state.decisions == []  # nothing was redeemed anywhere
+
+
+def test_ua_aborts_on_overlong_challenge_lifetime(world: SimpleNamespace, tmp_path: Path) -> None:
+    """An RP issuing beyond MAX_TOKEN_LIFETIME gets no issuance request at all."""
+    _register_mini_rp(world, "stale.test", rp_id="stale.test", challenge_ttl_pad=100_000)
+
+    state_path = enroll(world, tmp_path)
+    with pytest.raises(ua_client.UAError, match="lifetime exceeds"):
+        ua_client.verify_with_rp(
+            world.http, state_path, "http://stale.test", 18, now=world.clock["now"]
         )

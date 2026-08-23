@@ -1,6 +1,15 @@
 zk-age-attest changelog
 =======================
 
+2026-08-23  feat: key lifecycle end-to-end — scripts/rotate_key.py and revoke_key.py append to the transparency log; issuer hot-reloads on log change; RP re-reads its keyset per redemption; UAs accept appends with bounded gossip-lag tolerance (GOSSIP_LAG_TOLERANCE=16)
+2026-08-23  feat: enrollment anti-farming — one account per device public key (unique index); re-enrollment is idempotent and never mints a fresh rate budget
+2026-08-23  feat: UA hardening — guarded JSON parsing on all POST responses, challenge rp_id must match the RP host, over-long challenge TTLs abort before issuance
+2026-08-23  feat: signed-claims attester (Ed25519 authority) with scripts/sign_claim.py mock authority and zkage-ua enroll --attester signed --claim-file
+2026-08-23  feat: optional multi-node RP nonce store via Redis GETDEL (ZKAGE_REDIS_URL), duck-typed client, fakeredis-tested
+2026-08-23  feat: EXPERIMENTAL packages/zkage-threshold — 2-of-3 pairwise-additive threshold blind-signing PoC, wire-compatible with rsabssa (v1.5 starter)
+2026-08-23  chore: mypy across all packages, pytest-cov, py.typed markers, CI coverage + linkability-report artifact upload
+2026-08-23  docs: SECURITY.md disclosure policy, docs/RUNBOOK.md operations runbook, docs/BENCHMARKS.md measured primitive costs
+
 2026-06-10  init: scaffold uv workspace (zkage-core, zkage-verifier, zkage-issuer, zkage-rp, zkage-ua), CI, project docs, proprietary license (all rights reserved)
 2026-06-10  feat: RFC 9474 RSABSSA blind signatures validated against Appendix A test vectors
 2026-06-10  feat: v1 token codec, device-key issuance binding, hash-chained key transparency log

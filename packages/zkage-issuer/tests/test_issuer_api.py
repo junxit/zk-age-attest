@@ -1,5 +1,6 @@
 """Issuer API battery: enrollment, issuance binding, abuse controls, log endpoints."""
 
+import pathlib
 import secrets
 from types import SimpleNamespace
 
@@ -13,7 +14,7 @@ from zkage_issuer.app import create_app
 from zkage_issuer.attester import StubAttester
 from zkage_issuer.federation import FederationState, init_state
 from zkage_issuer.ratelimit import RateLimiter
-from zkage_issuer.store import IssuerStore
+from zkage_issuer.store import Account, IssuerStore
 
 NOW = 1_750_000_000
 RP = "demo-rp.example"
@@ -184,6 +185,62 @@ def test_issue_rate_limited(env: SimpleNamespace) -> None:
     resp = env.client.post("/issue", json=issue_body(account_id, sk, 18, dummy_blinded()))
     assert resp.status_code == 429 and resp.json()["error"] == "rate_limited"
     assert int(resp.headers["Retry-After"]) >= 1
+
+
+def test_enroll_idempotent_per_device(env: SimpleNamespace) -> None:
+    """Re-enrolling an enrolled device returns the SAME account, never a new one."""
+    sk = devicekey.generate_device_key()
+    body = {"device_pub": b64u(devicekey.device_public_raw(sk)), "claim": {"claimed_age": 21}}
+    first = env.client.post("/enroll", json=body)
+    second = env.client.post("/enroll", json=body)
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+
+
+def test_sybil_farm_yields_one_rate_budget(env: SimpleNamespace) -> None:
+    """Enrollment farming is dead: N enrollments on one device share ONE budget.
+
+    The fixture limiter allows exactly 2 issuances (burst capacity 2), so even
+    five 'accounts' built from one device key must hit 429 on the third request.
+    """
+    sk = devicekey.generate_device_key()
+    pub = b64u(devicekey.device_public_raw(sk))
+
+    def enroll() -> str:
+        return env.client.post(
+            "/enroll", json={"device_pub": pub, "claim": {"claimed_age": 21}}
+        ).json()["account_id"]
+
+    account_id_b64 = enroll()
+    for _ in range(4):
+        assert enroll() == account_id_b64
+    account_id = unb64u(account_id_b64)
+
+    blinded = dummy_blinded()
+    for _ in range(2):
+        resp = env.client.post("/issue", json=issue_body(account_id, sk, 18, blinded))
+        assert resp.status_code == 200
+    resp = env.client.post("/issue", json=issue_body(account_id, sk, 18, blinded))
+    assert resp.status_code == 429 and resp.json()["error"] == "rate_limited"
+
+
+def test_store_enforces_one_account_per_device(tmp_path: pathlib.Path) -> None:
+    """The unique index is load-bearing: a second row per device is impossible."""
+    store = IssuerStore(tmp_path / "store.sqlite")
+    sk = ed25519.Ed25519PrivateKey.generate()
+    device_pub = devicekey.device_public_raw(sk)
+    first = Account(secrets.token_bytes(16), device_pub, 18, NOW, NOW + 1000)
+
+    assert store.add_account(first) is True
+    second = Account(secrets.token_bytes(16), device_pub, 21, NOW, NOW + 1000)
+    assert store.add_account(second) is False  # concurrent-enrollment signal
+
+    assert store.get_account_by_device(device_pub) == first
+    assert store.get_account(second.account_id) is None  # never inserted
+
+    store.renew_account(first.account_id, max_scope=21, enrolled_at=NOW + 5, expires_at=NOW + 2000)
+    renewed = store.get_account(first.account_id)
+    assert renewed == Account(first.account_id, device_pub, 21, NOW + 5, NOW + 2000)
 
 
 def test_log_endpoints_consistent(env: SimpleNamespace) -> None:

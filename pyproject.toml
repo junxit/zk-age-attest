@@ -14,9 +14,11 @@ members = ["packages/*"]
 [dependency-groups]
 dev = [
     "pytest>=9.0",
+    "pytest-cov>=6.0",
     "ruff>=0.15",
     "mypy>=1.14",
     "httpx>=0.28",
+    "fakeredis>=2.30",
 ]
 
 [tool.ruff]
@@ -33,10 +35,23 @@ known-first-party = ["zkage_core", "zkage_verifier", "zkage_issuer", "zkage_rp",
 testpaths = ["tests", "packages"]
 addopts = "-q"
 
+[tool.coverage.run]
+source = [
+    "packages/zkage-core/src",
+    "packages/zkage-verifier/src",
+    "packages/zkage-issuer/src",
+    "packages/zkage-rp/src",
+    "packages/zkage-ua/src",
+]
+
 [tool.mypy]
 files = [
     "packages/zkage-core/src",
     "packages/zkage-verifier/src",
+    "packages/zkage-issuer/src",
+    "packages/zkage-rp/src",
+    "packages/zkage-ua/src",
+    "packages/zkage-threshold/src",
 ]
 mypy_path = [
     "packages/zkage-core/src",

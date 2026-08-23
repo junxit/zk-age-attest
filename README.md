@@ -99,17 +99,26 @@ Or open http://127.0.0.1:8002 for the demo RP page.
 |---|---|
 | `packages/zkage-core` | RFC 9474 RSABSSA, token codec, keys, device keys, transparency log (deps: `cryptography` only) |
 | `packages/zkage-verifier` | Pure offline verifier SDK (deps: `zkage-core` only — the no-phone-home claim) |
-| `packages/zkage-issuer` | FastAPI issuer: enroll, blind-issue, key/log endpoints |
-| `packages/zkage-rp` | FastAPI demo relying party: challenge + redeem with pop-before-verify |
+| `packages/zkage-issuer` | FastAPI issuer: enroll, blind-issue, key/log endpoints, key lifecycle |
+| `packages/zkage-rp` | FastAPI demo relying party: challenge + redeem with pop-before-verify; optional Redis nonce store (`ZKAGE_REDIS_URL`) |
 | `packages/zkage-ua` | User-agent CLI: enroll / verify / log-status |
+| `packages/zkage-threshold` | EXPERIMENTAL 2-of-3 threshold blind-signing PoC (v1.5 starter, wire-compatible) |
 | `docs/DESIGN.md` | Normative protocol spec (wire formats, verification checklist, v2 roadmap) |
 | `docs/THREAT-MODEL.md` | Adversary models, risk register, audit hooks |
-| `tests/` | End-to-end, adversarial battery, linkability simulation |
+| `docs/RUNBOOK.md` | Operating procedures: init, rotate, revoke, incident response |
+| `docs/BENCHMARKS.md` | Measured primitive costs and issuance throughput envelope |
+| `tests/` | End-to-end, adversarial battery, linkability simulation, rotation/revocation drills |
+
+Operator tooling: `scripts/init_federation.py`, `scripts/rotate_key.py`,
+`scripts/revoke_key.py`, `scripts/sign_claim.py` (mock attestation authority),
+`scripts/benchmark.py`.
 
 ## Read next
 
 - [docs/DESIGN.md](docs/DESIGN.md) — the protocol, byte-exact.
 - [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) — what we claim, against whom, and what remains.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — how to run, rotate, revoke, and respond to incidents.
+- [SECURITY.md](SECURITY.md) — disclosure policy.
 
 ## License
 

@@ -83,9 +83,11 @@ sequenceDiagram
   **key separation** and *also* by an explicit byte in the token; the
   verifier MUST cross-check token scope == key scope == challenged scope.
 - `key_id = SHA-256(DER SPKI)`.
-- Epochs: 90-day validity, 7-day overlap intended; with ≤10-minute tokens
-  rotation is operationally trivial. Compromise response: append a `revoked`
-  record; exposure is bounded by RP keyset-refresh interval + token TTL.
+- Epochs: 90-day validity. Rotation retires the previous epoch immediately —
+  the one-key-per-scope keyset projection gives an overlap window no meaning,
+  and ≤10-minute tokens make overlap unnecessary. Compromise response: append
+  a `revoked` record; exposure is bounded by the RP keyset-refresh interval
+  (one redemption, in this implementation) + token TTL.
 - Key policy is enforced wherever a key enters (UA and verifier): RSA only,
   `e = 65537`, allowed modulus sizes, `key_id` must match the SPKI hash.
 - Scope keys MUST be used for nothing but this protocol (blind-signing is an
@@ -109,8 +111,11 @@ status changes), never per-issuance data.
   (detects rollback and forks); require the issuance key to be logged-active;
   verify the finalized signature against the *logged* key.
 - **Split-view detection**: the RP gossips its current `log_head` inside each
-  challenge; the UA accepts it only if it equals its own verified head or the
-  immediate predecessor. Sustaining a per-user forked log therefore requires
+  challenge; the UA accepts it only if it matches one of the last
+  `GOSSIP_LAG_TOLERANCE` (16) record hashes of its own verified chain — RPs
+  refresh asynchronously, and a single rotation appends two records, so a
+  bounded lag is honest while any hash outside the chain's history is a loud
+  split-view abort. Sustaining a per-user forked log therefore requires
   issuer+RP collusion — an adversary with that power already has timing
   correlation, so equivocation buys little (THREAT-MODEL.md §4).
 - v2: Merkle tree with inclusion/consistency proofs and independent witnesses.
@@ -209,10 +214,12 @@ CI fixture enforces this discipline.
 ## 9. Roadmap
 
 - **v1.5 — threshold issuance, wire-compatible.** `BlindSign` is a raw RSA
-  private-key operation on an opaque value, so Shoup-style threshold RSA
-  applies verbatim: t-of-n operators sign without any client or wire change.
-  Interim key generation via a documented trusted-dealer ceremony; the
-  federation key becomes "no single operator can issue".
+  private-key operation on an opaque value, so threshold RSA applies without
+  any client or wire change. **Started**: `packages/zkage-threshold` is a
+  2-of-3 trusted-dealer PoC using pairwise-additive exponent sharing (simpler
+  than Shoup's Δ-correction; identical wire contract, no public partial
+  verification yet). Full Shoup sharing and a distributed key-generation
+  ceremony remain to be built; until then the dealer sees `d`.
 - **v1.5 — OHTTP relay** for issuance traffic (hides UA network identity from
   the issuer) plus optional client jitter (weakens timing correlation).
 - **v2 — offline mode.** Enrollment issues a long-lived anonymous credential

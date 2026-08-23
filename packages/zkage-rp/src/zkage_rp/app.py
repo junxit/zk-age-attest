@@ -21,9 +21,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from zkage_core.encoding import unb64u
-from zkage_core.keys import ScopeKeyRecord, keyset_from_json_dict
+from zkage_core.keys import KeyPolicyError, ScopeKeyRecord, keyset_from_json_dict
 from zkage_core.token import SCOPES, TokenFormatError, make_challenge, parse_token
-from zkage_rp.replay import PendingChallengeStore
+from zkage_rp.replay import PendingChallengeStore, PendingStore
 from zkage_verifier import Decision, verify_token
 
 logger = logging.getLogger("zkage_rp")
@@ -35,17 +35,49 @@ class RedeemRequest(BaseModel):
     token: str
 
 
+def keyset_file_provider(path: Path) -> Callable[[], list[ScopeKeyRecord]]:
+    """Build a keyset provider that re-reads ``path`` on every redemption.
+
+    This is the RP-side half of rotation/revocation: when the issuer
+    republishes ``keyset.json``, the next redemption sees the new trust anchors
+    without an application restart. Re-reading per redemption is deliberate —
+    the file holds one record per scope (the log grows ~8 records/quarter), so
+    the cost is nil and no staleness window can survive a request boundary.
+
+    Fail-closed: a missing, unreadable, or malformed keyset yields an empty
+    list, so nothing verifies rather than something stale verifying.
+    """
+
+    def provide() -> list[ScopeKeyRecord]:
+        try:
+            return keyset_from_json_dict(json.loads(path.read_text()))
+        except (OSError, ValueError, KeyPolicyError):
+            return []
+
+    return provide
+
+
 def create_app(
-    keyset: list[ScopeKeyRecord],
+    keyset: list[ScopeKeyRecord] | Callable[[], list[ScopeKeyRecord]],
     rp_id: str,
     clock: Callable[[], int],
     log_head_provider: Callable[[], bytes | None] = lambda: None,
+    pending_store: PendingStore | None = None,
 ) -> FastAPI:
-    """Build the RP app with an injected keyset, identity, clock, and log head."""
+    """Build the RP app with an injected keyset, identity, clock, and log head.
+
+    ``keyset`` may be a static list (tests) or a zero-arg provider consulted
+    at each redemption (demo/production refresh via :func:`keyset_file_provider`).
+    ``pending_store`` swaps the in-process nonce store for a shared one
+    (e.g., :class:`zkage_rp.redis_replay.RedisPendingChallengeStore`).
+    """
     app = FastAPI(title="zkage-rp", version="0.1.0")
-    store = PendingChallengeStore()
+    store = pending_store if pending_store is not None else PendingChallengeStore()
     app.state.pending = store
     app.state.decisions = []  # internal log of Decision values (introspectable in tests)
+
+    def current_keyset() -> list[ScopeKeyRecord]:
+        return keyset() if callable(keyset) else keyset
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -81,7 +113,7 @@ def create_app(
         if pending is None:
             return _reject(Decision.CHALLENGE_MISMATCH)
 
-        result = verify_token(wire, keyset, pending, now)
+        result = verify_token(wire, current_keyset(), pending, now)
         app.state.decisions.append(result.decision)
         if not result.ok:
             logger.info("redemption rejected: %s", result.decision.value)
@@ -95,12 +127,15 @@ def create_demo_app() -> FastAPI:
     """Uvicorn factory.
 
     Env: ``ZKAGE_KEYSET`` (default ./demo-state/public/keyset.json),
-    ``ZKAGE_RP_ID`` (default demo-rp.local). The log head for split-view gossip
-    is read from log_head.json next to the keyset, if present.
+    ``ZKAGE_RP_ID`` (default 127.0.0.1 — must match the hostname UAs use to
+    reach this RP; the UA aborts on a challenge/rp_id mismatch),
+    ``ZKAGE_REDIS_URL`` (optional; enables the shared Redis pending store for
+    multi-worker deployments). The keyset is re-read per redemption
+    (rotation/revocation take effect without restart); the log head for
+    split-view gossip is read from log_head.json next to the keyset.
     """
     keyset_path = Path(os.environ.get("ZKAGE_KEYSET", "./demo-state/public/keyset.json"))
-    rp_id = os.environ.get("ZKAGE_RP_ID", "demo-rp.local")
-    keyset = keyset_from_json_dict(json.loads(keyset_path.read_text()))
+    rp_id = os.environ.get("ZKAGE_RP_ID", "127.0.0.1")
 
     head_path = keyset_path.parent / "log_head.json"
 
@@ -111,7 +146,27 @@ def create_demo_app() -> FastAPI:
         except (OSError, ValueError, KeyError):
             return None
 
-    return create_app(keyset, rp_id, lambda: int(time.time()), log_head_provider)
+    pending_store = None
+    redis_url = os.environ.get("ZKAGE_REDIS_URL")
+    if redis_url:
+        try:
+            import redis
+        except ImportError as exc:
+            raise RuntimeError(
+                "ZKAGE_REDIS_URL is set but the 'redis' package is not installed"
+                " (uv pip install redis)"
+            ) from exc
+        from zkage_rp.redis_replay import RedisPendingChallengeStore
+
+        pending_store = RedisPendingChallengeStore(redis.Redis.from_url(redis_url))
+
+    return create_app(
+        keyset_file_provider(keyset_path),
+        rp_id,
+        lambda: int(time.time()),
+        log_head_provider,
+        pending_store=pending_store,
+    )
 
 
 _INDEX_HTML = """<!doctype html>

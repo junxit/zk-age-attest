@@ -4,6 +4,11 @@ The UA is the privacy-critical party: it blinds the challenge before the
 issuer sees it, and it refuses to emit a token unless the issuer's signature
 verifies under a key from the *verified, pinned* transparency log (failing
 closed on key substitution, rollback, fork, or split view).
+
+Fail-closed also means fail-clean: every server response is parsed defensively,
+the challenged rp_id must match the RP actually being talked to, and a
+challenge whose lifetime exceeds the verifier's maximum is aborted BEFORE any
+issuance (so it cannot burn an issuance request or a rate-limit slot).
 """
 
 from __future__ import annotations
@@ -11,17 +16,35 @@ from __future__ import annotations
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
 from zkage_core import devicekey, rsabssa, translog
-from zkage_core.encoding import as_str, b64u, unb64u
-from zkage_core.token import Challenge, encode_token, token_msg_for_challenge
+from zkage_core.encoding import as_int, as_str, b64u, unb64u
+from zkage_core.token import (
+    MAX_TOKEN_LIFETIME,
+    SCOPES,
+    Challenge,
+    encode_token,
+    token_msg_for_challenge,
+)
 from zkage_ua.state import UAState, load_state, save_state
 
 
 class UAError(Exception):
     """A flow failed; the message is safe to show the user."""
+
+
+def _response_json(resp: httpx.Response, context: str) -> dict[str, object]:
+    """Parse a POST response body as a JSON object, cleanly on failure."""
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise UAError(f"{context}: malformed response ({resp.status_code})") from exc
+    if not isinstance(data, dict):
+        raise UAError(f"{context}: unexpected response payload")
+    return data
 
 
 def _get_json(http: httpx.Client, url: str) -> dict[str, object]:
@@ -44,7 +67,9 @@ def sync_log(http: httpx.Client, state: UAState) -> tuple[list[translog.LogRecor
 
     Raises:
         UAError: On head-signature failure, log-key change, tamper, rollback,
-            or fork relative to the pinned head.
+            or fork relative to the pinned head. A changed log-signing key
+            aborts permanently by design (TOFU); the documented recovery is to
+            delete the state file and re-enroll, which re-pins from scratch.
     """
     head_payload = _get_json(http, f"{state.issuer_url}/log/head")
     try:
@@ -85,8 +110,19 @@ def enroll(
     state_path: Path,
     *,
     attester: str = "stub",
+    claim: dict[str, object] | None = None,
 ) -> UAState:
     """Enroll with the issuer, then sync and pin the transparency log.
+
+    Args:
+        http: HTTP client.
+        issuer_url: Issuer base URL.
+        claimed_age: Self-declared age (used by the stub attester only).
+        state_path: Where to persist UA state.
+        attester: Attester name registered at the issuer.
+        claim: Full claim payload override (e.g., an authority-signed
+            attestation for ``attester="signed"``); defaults to
+            ``{"claimed_age": claimed_age}``.
 
     Raises:
         UAError: On enrollment rejection or log verification failure.
@@ -98,14 +134,15 @@ def enroll(
             json={
                 "device_pub": b64u(devicekey.device_public_raw(device)),
                 "attester": attester,
-                "claim": {"claimed_age": claimed_age},
+                "claim": claim if claim is not None else {"claimed_age": claimed_age},
             },
         )
     except httpx.HTTPError as exc:
         raise UAError(f"cannot reach issuer: {exc}") from exc
     if resp.status_code != 200:
-        raise UAError(f"enrollment rejected: {resp.json().get('error', resp.status_code)}")
-    body = resp.json()
+        detail = _response_json(resp, "enrollment").get("error", resp.status_code)
+        raise UAError(f"enrollment rejected: {detail}")
+    body = _response_json(resp, "enroll")
 
     head_payload = _get_json(http, f"{issuer_url}/log/head")
     try:
@@ -117,7 +154,7 @@ def enroll(
         issuer_url=issuer_url,
         account_id=unb64u(as_str(body["account_id"])),
         device_sk_raw=devicekey.device_private_raw(device),
-        max_scope=int(body["max_scope"]),
+        max_scope=as_int(body["max_scope"]),
         log_public_raw=log_public_raw,
         pinned_size=0,
         pinned_head=translog.GENESIS_PREV,
@@ -158,13 +195,31 @@ def verify_with_rp(
     if challenge.scope != scope:
         raise UAError("RP challenge scope does not match the requested scope")
 
+    # The token would bind whatever rp_id the challenge claims — make sure it
+    # is the RP the user is actually talking to (challenge-relay hardening).
+    challenged_host = urlparse(f"//{challenge.rp_id}").hostname or challenge.rp_id
+    if challenged_host != (urlparse(rp_url).hostname or ""):
+        raise UAError(
+            f"challenge is for rp_id '{challenge.rp_id}', "
+            f"but this is '{urlparse(rp_url).hostname}'; aborting"
+        )
+
+    # Abort BEFORE any issuance on a challenge that could never verify.
+    if challenge.expires_at <= now:
+        raise UAError("RP challenge has already expired; aborting")
+    if challenge.expires_at - now > MAX_TOKEN_LIFETIME:
+        raise UAError("RP challenge lifetime exceeds the protocol maximum; aborting")
+
     records, state = sync_log(http, state)
     save_state(state_path, state)
 
     if challenge.log_head is not None:
-        current = records[-1].record_hash if records else translog.GENESIS_PREV
-        previous = records[-2].record_hash if len(records) >= 2 else translog.GENESIS_PREV
-        if challenge.log_head not in (current, previous):
+        # The RP's view may legitimately lag a few appends behind ours (a
+        # rotation writes two records); any hash outside the honest chain's
+        # recent history is still a loud split-view abort.
+        accepted = {r.record_hash for r in records[-translog.GOSSIP_LAG_TOLERANCE :]}
+        accepted.add(translog.GENESIS_PREV)
+        if challenge.log_head not in accepted:
             raise UAError(
                 "RP's view of the transparency log diverges from ours; "
                 "possible split-view attack — aborting"
@@ -199,8 +254,9 @@ def verify_with_rp(
     except httpx.HTTPError as exc:
         raise UAError(f"cannot reach issuer: {exc}") from exc
     if resp.status_code != 200:
-        raise UAError(f"issuance refused: {resp.json().get('error', resp.status_code)}")
-    body = resp.json()
+        detail = _response_json(resp, "issuance").get("error", resp.status_code)
+        raise UAError(f"issuance refused: {detail}")
+    body = _response_json(resp, "issuance")
     if unb64u(as_str(body["key_id"])) != record.key_id:
         raise UAError("issuer signed with a key that is not in the transparency log; aborting")
 
@@ -217,7 +273,7 @@ def verify_with_rp(
         redeem = http.post(f"{rp_url}/redeem", json={"token": b64u(wire)})
     except httpx.HTTPError as exc:
         raise UAError(f"cannot reach RP: {exc}") from exc
-    redeem_body = redeem.json()
+    redeem_body = _response_json(redeem, "token redemption")
     return {
         "verified": bool(redeem_body.get("verified", False)),
         "scope": redeem_body.get("scope"),
@@ -230,8 +286,11 @@ def log_status(http: httpx.Client, state_path: Path) -> dict[str, object]:
     records, state = sync_log(http, state)
     save_state(state_path, state)
     head = records[-1].record_hash if records else translog.GENESIS_PREV
+    now = int(time.time())
+    # Effective status (latest record per key), not raw record statuses.
+    active_scopes = [s for s in SCOPES if translog.active_record_for(records, s, now)]
     return {
         "size": len(records),
         "head": head.hex(),
-        "active_scopes": sorted({r.scope for r in records if r.status == "active"}),
+        "active_scopes": sorted(active_scopes),
     }

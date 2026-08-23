@@ -13,8 +13,29 @@ Demo store is in-process; a multi-node RP needs an atomic shared pop
 from __future__ import annotations
 
 import threading
+from typing import Protocol
 
 from zkage_core.token import Challenge
+
+
+class PendingStore(Protocol):
+    """What the RP needs from any pending-challenge store (in-process or shared)."""
+
+    def put(self, challenge: Challenge) -> None:
+        """Register a freshly issued challenge."""
+        ...
+
+    def pop(self, nonce: bytes) -> Challenge | None:
+        """Atomically remove and return the pending challenge, if any."""
+        ...
+
+    def sweep(self, now: int) -> int:
+        """Drop expired challenges; returns how many were removed."""
+        ...
+
+    def __len__(self) -> int:
+        """Number of currently pending challenges."""
+        ...
 
 
 class PendingChallengeStore:

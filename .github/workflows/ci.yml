@@ -68,4 +68,5 @@ jobs:
             sleep 1
           done
       - run: uv run zkage-ua enroll --issuer http://127.0.0.1:8001 --claim-age 21 --state ./ua-state.json
-      - run: uv run zkage-ua verify --rp http://127.0.0.1:8002 --scope 18 --state ./ua-state.json | grep "verified: over-18"
+      - run: |
+          uv run zkage-ua verify --rp http://127.0.0.1:8002 --scope 18 --state ./ua-state.json | grep "verified: over-18"

@@ -9,6 +9,7 @@ zk-age-attest changelog
 2026-08-23  feat: EXPERIMENTAL packages/zkage-threshold — 2-of-3 pairwise-additive threshold blind-signing PoC, wire-compatible with rsabssa (v1.5 starter)
 2026-08-23  chore: mypy across all packages, pytest-cov, py.typed markers, CI coverage + linkability-report artifact upload
 2026-08-23  docs: SECURITY.md disclosure policy, docs/RUNBOOK.md operations runbook, docs/BENCHMARKS.md measured primitive costs
+2026-08-23  fix: CI never ran — astral-sh/setup-uv@v8 is not a published tag (majors stop at v7), so every run failed at workflow startup with zero jobs scheduled; pinned to v7
 
 2026-06-10  init: scaffold uv workspace (zkage-core, zkage-verifier, zkage-issuer, zkage-rp, zkage-ua), CI, project docs, proprietary license (all rights reserved)
 2026-06-10  feat: RFC 9474 RSABSSA blind signatures validated against Appendix A test vectors

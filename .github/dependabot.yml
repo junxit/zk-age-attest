@@ -1,0 +1,32 @@
+# Dependabot version updates: a weekly check of the Python dependencies (the uv workspace: the
+# root pyproject.toml and uv.lock, which locks every package under packages/) and of the GitHub
+# Actions in ci.yml. Python minor and patch bumps share one pull request, and each major bump
+# gets its own, since a major is the change most likely to break something; action updates all
+# share one. ci.yml runs on each of these pull requests. Security updates are switched on in the
+# repository settings.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      python-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

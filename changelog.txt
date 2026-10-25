@@ -1,6 +1,7 @@
 zk-age-attest changelog
 =======================
 
+2026-10-25  fix: upgrade the dependencies carrying advisories — cryptography 48.0.1 -> 50.0.2 closes GHSA-g6cj-pr64-35w5 (Bleichenbacher oracle in PKCS#7 decryption), GHSA-jwv3-5hgf-82ww and GHSA-m2h6-j472-rp4c, and packages/zkage-core now requires cryptography>=50 because it is the blind-signature primitive; anyio 4.13.0 -> 4.15.1 (GHSA-82r6-8w77-94w6, TLS certificate spoofing via IDNA 2003 host encoding); certifi -> 2026.10.23 (GHSA-6q48-6c7w-9gw2, compromised emSign intermediates); starlette 1.2.1 -> 1.10.0 (GHSA-82w8-qh3p-5jfq, form-limit DoS). All 8 alerts closed; 168 tests pass
 2026-08-23  feat: key lifecycle end-to-end — scripts/rotate_key.py and revoke_key.py append to the transparency log; issuer hot-reloads on log change; RP re-reads its keyset per redemption; UAs accept appends with bounded gossip-lag tolerance (GOSSIP_LAG_TOLERANCE=16)
 2026-08-23  feat: enrollment anti-farming — one account per device public key (unique index); re-enrollment is idempotent and never mints a fresh rate budget
 2026-08-23  feat: UA hardening — guarded JSON parsing on all POST responses, challenge rp_id must match the RP host, over-long challenge TTLs abort before issuance

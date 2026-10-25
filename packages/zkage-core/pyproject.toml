@@ -3,7 +3,9 @@ name = "zkage-core"
 version = "0.1.0"
 description = "Core cryptography for zk-age-attest: RFC 9474 blind signatures, token codec, device keys, key transparency log"
 requires-python = ">=3.12"
-dependencies = ["cryptography>=44"]
+# GHSA-g6cj-pr64-35w5 (PKCS#7 Bleichenbacher oracle), GHSA-jwv3-5hgf-82ww,
+# GHSA-m2h6-j472-rp4c. 50.x also carries the OpenSSL fixes of GHSA-537c-gmf6-5ccf.
+dependencies = ["cryptography>=50"]
 
 [build-system]
 requires = ["hatchling"]
